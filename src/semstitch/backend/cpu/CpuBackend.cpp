@@ -1,60 +1,49 @@
 #include "CpuBackend.hpp"
-#include <opencv2/imgproc.hpp>
+
 #include <opencv2/core.hpp>
-#include <opencv2/features2d.hpp>
-#include <opencv2/calib3d.hpp>
+#include <opencv2/imgproc.hpp>
+#include <cmath>
+#include <stdexcept>
 
 namespace semstitch {
 
-//------------------------------------------------------------------
-// Drift (phase correlation via OpenCV)
-//------------------------------------------------------------------
+namespace {
+// Оборачиваем данные кадра в Mat и конвертируем в float [0..1]
+cv::Mat toFloatMat(const Frame& f) {
+    // Без копии: используем внешние данные (валидны в рамках вызова)
+    cv::Mat m8(f.height, f.width, CV_8UC1,
+               const_cast<std::uint8_t*>(f.data.data()));
+    cv::Mat m32;
+    m8.convertTo(m32, CV_32F, 1.0 / 255.0);
+    return m32;
+}
+} // namespace
+
 DriftVector CpuBackend::drift(const Frame& prev, const Frame& curr) {
-    cv::Mat a(prev.height, prev.width, CV_8UC1, const_cast<unsigned char*>(prev.data.data()));
-    cv::Mat b(curr.height, curr.width, CV_8UC1, const_cast<unsigned char*>(curr.data.data()));
-    cv::Point2d shift = cv::phaseCorrelate(a, b);
-    return {shift.x, shift.y};
+    if (prev.width != curr.width || prev.height != curr.height) {
+        throw std::runtime_error("CpuBackend::drift: frame sizes differ");
+    }
+
+    cv::Mat a = toFloatMat(prev);
+    cv::Mat b = toFloatMat(curr);
+
+    // Окно Хэннинга для устойчивости phaseCorrelation
+    cv::Mat win;
+    cv::createHanningWindow(win, a.size(), CV_32F);
+
+    cv::Point2d shift = cv::phaseCorrelate(a, b, win);
+    return { shift.x, shift.y };
 }
 
-//------------------------------------------------------------------
-// Feature matching + RANSAC homography
-//------------------------------------------------------------------
 Homography CpuBackend::match(const Frame& prev, const Frame& curr) {
-    cv::Mat img1(prev.height, prev.width, CV_8UC1, const_cast<unsigned char*>(prev.data.data()));
-    cv::Mat img2(curr.height, curr.width, CV_8UC1, const_cast<unsigned char*>(curr.data.data()));
+    // Пока строим чисто трансляционную гомографию из дрейфа
+    const DriftVector d = drift(prev, curr);
 
-    auto orb = cv::ORB::create(2000);
-    std::vector<cv::KeyPoint> k1, k2;
-    cv::Mat d1, d2;
-    orb->detectAndCompute(img1, cv::noArray(), k1, d1);
-    orb->detectAndCompute(img2, cv::noArray(), k2, d2);
-
-    cv::BFMatcher bf(cv::NORM_HAMMING, false);
-    std::vector<std::vector<cv::DMatch>> knn;
-    bf.knnMatch(d1, d2, knn, 2);
-
-    std::vector<cv::DMatch> good;
-    for (auto& v : knn)
-        if (v.size() == 2 && v[0].distance < 0.75f * v[1].distance)
-            good.push_back(v[0]);
-
-    std::vector<cv::Point2f> p1, p2;
-    for (auto& m : good) {
-        p1.push_back(k1[m.queryIdx].pt);
-        p2.push_back(k2[m.trainIdx].pt);
-    }
-
-    Homography Hwrap{};
-    if (p1.size() >= 4) {
-        cv::Mat H = cv::findHomography(p1, p2, cv::RANSAC);
-        if (!H.empty()) {
-            std::copy(reinterpret_cast<double*>(H.data),
-                      reinterpret_cast<double*>(H.data) + 9,
-                      Hwrap.h);
-        }
-    }
-    return Hwrap;
+    Homography H{};
+    H.h[0] = 1.0; H.h[1] = 0.0; H.h[2] = d.dx;
+    H.h[3] = 0.0; H.h[4] = 1.0; H.h[5] = d.dy;
+    H.h[6] = 0.0; H.h[7] = 0.0; H.h[8] = 1.0;
+    return H;
 }
 
 } // namespace semstitch
-

@@ -50,6 +50,7 @@ add_library(semstitch STATIC
     src/semstitch/backend/cpu/CpuBackend.cpp
     src/semstitch/io/GrpcServer.cpp
     src/semstitch/io/GrpcClient.cpp
+    src/semstitch/io/ArtimagenSource.cpp  
     $<TARGET_OBJECTS:proto_objs>          
 )
 

@@ -5,6 +5,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <iostream>   
 
 namespace semstitch {
 
@@ -16,6 +17,7 @@ public:
         builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
         builder.RegisterService(this);
         server_ = builder.BuildAndStart();
+        std::cerr << "[grpc-server] listening at " << addr << std::endl; 
         worker_ = std::thread([this] { server_->Wait(); });
     }
     ~Impl() {
@@ -23,7 +25,6 @@ public:
         if (worker_.joinable()) worker_.join();
     }
 
-    // приход от ядра → в очередь
     void push(const Frame& f) {
         std::lock_guard lk(mx_);
         q_.push(f);
@@ -31,11 +32,11 @@ public:
     }
 
 private:
-    // поток gRPC
     grpc::Status StreamFrames(
         grpc::ServerContext* ctx,
         grpc::ServerReaderWriter<FrameChunk, FrameChunk>* stream) override {
 
+        std::size_t sent = 0;
         while (!ctx->IsCancelled()) {
             std::unique_lock lk(mx_);
             cv_.wait(lk, [this, ctx] { return !q_.empty() || ctx->IsCancelled(); });
@@ -44,15 +45,23 @@ private:
                 lk.unlock();
 
                 FrameChunk out;
-                out.set_data(f.data.data(), f.bytes());
-                out.set_width(f.width);
-                out.set_height(f.height);
+                out.set_data(reinterpret_cast<const char*>(f.data.data()),
+                             static_cast<int>(f.bytes()));
+                out.set_width(static_cast<int>(f.width));
+                out.set_height(static_cast<int>(f.height));
                 out.set_timestamp_ns(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         f.timestamp.time_since_epoch()).count());
                 out.set_format(static_cast<PixelFmtPB>(f.format));
 
-                stream->Write(out);
+                if (!stream->Write(out)) {
+                    std::cerr << "[grpc-server] stream->Write() failed, client gone?\n";
+                    return grpc::Status::OK;
+                }
+                ++sent;
+                if (sent % 30 == 0) {
+                    std::cerr << "[grpc-server] sent frames: " << sent << std::endl;
+                }
                 lk.lock();
             }
         }
@@ -70,6 +79,6 @@ GrpcServer::GrpcServer(std::uint16_t port)
     : pimpl_{std::make_unique<Impl>(port)} {}
 
 GrpcServer::~GrpcServer() = default;
-void GrpcServer::pushFrame(const Frame& f)        { pimpl_->push(f); }
+void GrpcServer::pushFrame(const Frame& f) { pimpl_->push(f); }
 
 } // namespace semstitch
