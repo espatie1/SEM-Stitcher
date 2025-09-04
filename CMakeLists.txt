@@ -16,11 +16,25 @@ find_package(OpenCV REQUIRED
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 
-
 set(PROTO_FILE ${CMAKE_CURRENT_SOURCE_DIR}/proto/semstitch.proto)
 
-protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS   ${PROTO_FILE})
-protobuf_generate_grpc_cpp(GRPC_SRCS  GRPC_HDRS ${PROTO_FILE})
+# ---------- protobuf (messages) ----------
+protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILE})
+
+# ---------- gRPC (services) --------------
+set(GRPC_SRCS ${CMAKE_CURRENT_BINARY_DIR}/semstitch.grpc.pb.cc)
+set(GRPC_HDRS ${CMAKE_CURRENT_BINARY_DIR}/semstitch.grpc.pb.h)
+
+add_custom_command(
+  OUTPUT  ${GRPC_SRCS} ${GRPC_HDRS}
+  COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+          --grpc_out=${CMAKE_CURRENT_BINARY_DIR}
+          --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+          -I ${CMAKE_CURRENT_SOURCE_DIR}/proto
+          ${PROTO_FILE}
+  DEPENDS ${PROTO_FILE}
+  COMMENT "Generate gRPC sources"
+)
 
 add_library(proto_objs OBJECT ${PROTO_SRCS} ${PROTO_HDRS}
                               ${GRPC_SRCS}  ${GRPC_HDRS})
@@ -36,21 +50,25 @@ add_library(semstitch STATIC
     src/semstitch/backend/cpu/CpuBackend.cpp
     src/semstitch/io/GrpcServer.cpp
     src/semstitch/io/GrpcClient.cpp
-    src/semstitch/io/ArtimagenSource.cpp
     $<TARGET_OBJECTS:proto_objs>          
 )
 
 target_include_directories(semstitch PUBLIC
-    core/include
-    ${CMAKE_CURRENT_BINARY_DIR}           
+    src/semstitch/core/include
+    src/semstitch/backend
+    src/semstitch/io
+    ${CMAKE_CURRENT_BINARY_DIR}
+    third_party/artimagen/src
+    ${OpenCV_INCLUDE_DIRS}
 )
 
+
 target_link_libraries(semstitch
-    PRIVATE
-        OpenCV::opencv_core
-        OpenCV::opencv_imgproc
-        OpenCV::opencv_features2d
-        OpenCV::opencv_calib3d
+    PUBLIC
+        opencv_core        
+        opencv_imgproc
+        opencv_features2d
+        opencv_calib3d
         Threads::Threads
         gRPC::grpc++ gRPC::grpc
         protobuf::libprotobuf
@@ -69,5 +87,3 @@ if(USE_IMGUI_VIEWER)
     target_link_libraries(sem-stitch-viewer PRIVATE
         semstitch glfw GLEW::GLEW OpenGL::GL)
 endif()
-
-enable_testing()

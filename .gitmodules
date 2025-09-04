@@ -1,0 +1,3 @@
+[submodule "third_party/artimagen"]
+	path = third_party/artimagen
+	url = https://github.com/strec007/artimagen.git

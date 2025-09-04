@@ -1,5 +1,5 @@
 #include "semstitch/io/GrpcServer.hpp"
-#include "proto/semstitch.grpc.pb.h"
+#include "semstitch.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <queue>
 #include <mutex>
@@ -38,7 +38,7 @@ private:
 
         while (!ctx->IsCancelled()) {
             std::unique_lock lk(mx_);
-            cv_.wait(lk, [this] { return !q_.empty() || ctx->IsCancelled(); });
+            cv_.wait(lk, [this, ctx] { return !q_.empty() || ctx->IsCancelled(); });
             while (!q_.empty()) {
                 const Frame f = q_.front(); q_.pop();
                 lk.unlock();
@@ -50,7 +50,7 @@ private:
                 out.set_timestamp_ns(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         f.timestamp.time_since_epoch()).count());
-                out.set_format(static_cast<PixelFormat>(f.format));
+                out.set_format(static_cast<PixelFmtPB>(f.format));
 
                 stream->Write(out);
                 lk.lock();

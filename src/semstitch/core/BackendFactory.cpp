@@ -1,5 +1,5 @@
 #include "semstitch/core/Backend.hpp"
-#include "semstitch/backend/cpu/CpuBackend.hpp"
+#include "cpu/CpuBackend.hpp"
 #include <stdexcept>
 #include <memory>
 

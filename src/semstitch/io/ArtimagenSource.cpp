@@ -1,5 +1,5 @@
 #include "semstitch/io/ArtimagenSource.hpp"
-#include <artimagen/Engine.hpp>
+#include "libartimagen/artimagen.h"
 
 namespace semstitch {
 

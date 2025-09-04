@@ -2,6 +2,7 @@
 
 #include <memory>
 #include "Frame.hpp"
+#include "Config.hpp"
 
 namespace semstitch {
 

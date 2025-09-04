@@ -3,20 +3,20 @@ package semstitch;
 
 import "google/protobuf/empty.proto";
 
-enum PixelFormat {
+enum PixelFmtPB {
   GRAY8  = 0;
   RGB24  = 1;
   RGBA32 = 2;
 }
 
 message FrameChunk {
-  bytes  data         = 1;   // raw pixel buffer
-  uint32 width        = 2;
-  uint32 height       = 3;
-  uint64 timestamp_ns = 4;
-  PixelFormat format  = 5;
+  bytes       data         = 1;
+  uint32      width        = 2;
+  uint32      height       = 3;
+  uint64      timestamp_ns = 4;
+  PixelFmtPB  format       = 5;
 }
 
 service SemStitch {
-  rpc StreamFrames (stream FrameChunk) returns (google.protobuf.Empty);
+  rpc StreamFrames (stream FrameChunk) returns (stream FrameChunk);
 }

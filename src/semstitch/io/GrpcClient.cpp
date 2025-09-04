@@ -1,5 +1,5 @@
 #include "semstitch/io/GrpcClient.hpp"
-#include "proto/semstitch.grpc.pb.h"
+#include "semstitch.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <thread>
 
@@ -49,6 +49,8 @@ private:
 
 GrpcClient::GrpcClient(const std::string& addr)
     : pimpl_{std::make_unique<Impl>(addr)} {}
+
+GrpcClient::~GrpcClient() = default; 
 
 void GrpcClient::start(FrameHandler cb) { pimpl_->start(std::move(cb)); }
 void GrpcClient::shutdown()             { pimpl_->shutdown(); }

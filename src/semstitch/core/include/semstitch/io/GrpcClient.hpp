@@ -12,6 +12,7 @@ public:
     using FrameHandler = std::function<void(const Frame&)>;
 
     explicit GrpcClient(const std::string& address = "localhost:50051");
+    ~GrpcClient();
     void start(FrameHandler cb); 
     void shutdown();             
 
