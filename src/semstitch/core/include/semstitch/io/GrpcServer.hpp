@@ -1,23 +1,21 @@
 #pragma once
 #include "semstitch/core/Frame.hpp"
-#include <memory>
 #include <cstdint>
-
-namespace grpc { class Server; }
+#include <memory>
 
 namespace semstitch {
 
-class GrpcServer final {
+class GrpcServer {
 public:
     struct Options {
-        std::size_t maxQueue = 128;   // максимальная длина очереди кадров
-        bool dropOldest = true;       // true → выкидываем самый старый, false → отбрасываем новый
-        int heartbeatMs = 1000;       // если нет кадров столько мс — шлём heartbeat (пустой кадр)
-        bool enableCompression = false;
+        int  max_queue        = 256;   // максимум кадров в очереди
+        bool dropOldest       = true;  // при переполнении: true → выкидываем старые, false → игнорим новый
+        int  heartbeatMs      = 1000;  // период логов состояния сервера (>0 — включить)
+        bool enableCompression= false; // зарезервировано, пока не используется
     };
 
     explicit GrpcServer(std::uint16_t port = 50051);
-    GrpcServer(std::uint16_t port, Options opts);
+    GrpcServer(std::uint16_t port, const Options& opt);
     ~GrpcServer();
 
     void pushFrame(const Frame& f);

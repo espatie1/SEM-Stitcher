@@ -12,7 +12,7 @@ add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/permissive->)
 
 find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED
-             COMPONENTS core imgproc features2d calib3d)
+             COMPONENTS core imgproc features2d calib3d imgcodecs)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 
@@ -77,7 +77,7 @@ target_link_libraries(semstitch
 )
 
 add_executable(sem-stitch-cli src/semstitch/cli/main.cpp)
-target_link_libraries(sem-stitch-cli PRIVATE semstitch)
+target_link_libraries(sem-stitch-cli PRIVATE semstitch opencv_imgcodecs)
 
 if(USE_IMGUI_VIEWER)
     find_package(glfw3 REQUIRED)
