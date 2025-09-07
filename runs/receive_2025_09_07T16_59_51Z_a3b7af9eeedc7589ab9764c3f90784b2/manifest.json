@@ -1,0 +1,20 @@
+{
+  "mist_version": "0.1",
+  "run_id": "ac74f532d7af1f6da35aa7fc7a84f0a0",
+  "mode": "receive",
+  "started_at": "2025-09-07T16:59:51Z",
+  "finished_at": "2025-09-07T17:00:19Z",
+  "outdir": "runs/receive_2025_09_07T16_59_51Z_a3b7af9eeedc7589ab9764c3f90784b2",
+  "cli": { "argv": "./build/sem-stitch-cli receive --view" },
+  "software": {
+    "semstitch_version": "dev",
+    "git_sha": "unknown",
+    "opencv": "4.6.0"
+  },
+  "input": { "grpc_address": "localhost:50051" },
+  "network": { "profile": "balanced", "latency_target_ms": 200, "bufcap": 256, "drop": "oldest" },
+  "stats": { "frames_in": 529, "frames_out": 78, "drops": 195, "bytes_in": 138674176, "duration_s": 28.243, "mb_per_s": 4.68 },
+  "artifacts": [
+    {"path":"runs/receive_2025_09_07T16_59_51Z_a3b7af9eeedc7589ab9764c3f90784b2/mosaic.png","size":350072,"sha256":"","crc32":"95F53364","kind":"mosaic"}
+  ]
+}

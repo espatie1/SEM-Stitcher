@@ -61,7 +61,9 @@
         "set": "cpp",
         "unordered_set": "cpp",
         "fstream": "cpp",
-        "cinttypes": "cpp"
+        "cinttypes": "cpp",
+        "codecvt": "cpp",
+        "iomanip": "cpp"
     },
     "idf.pythonInstallPath": "/usr/bin/python3"
 }

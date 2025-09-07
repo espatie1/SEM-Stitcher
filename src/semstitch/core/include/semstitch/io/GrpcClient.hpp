@@ -1,5 +1,8 @@
 #pragma once
+
 #include "semstitch/core/Frame.hpp"
+
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -8,22 +11,25 @@ namespace semstitch {
 
 class GrpcClient {
 public:
-    using FrameHandler = std::function<void(const Frame&)>;
-
     struct Options {
-        bool print_heartbeat   = true;  // печатать пульсацию
-        int  idleLogMs         = 2000;  // период heartbeat
-        int  reconnectInitialMs= 250;   // начальная задержка перед переподключением
-        int  reconnectMaxMs    = 5000;  // максимум задержки
-        bool enableCompression = false; // зарезервировано, пока не используется
+        int   reconnectInitialMs = 300;   // начальный бэкофф при реконнекте
+        int   reconnectMaxMs     = 8000;  // верхняя граница бэкоффа
+        int   idleLogMs          = 2500;  // период heartbeat-лога в простое
+        bool  enableCompression  = false; // зарезервировано
+        bool  printHeartbeat     = true;
     };
 
-    explicit GrpcClient(const std::string& address = "localhost:50051");
-    GrpcClient(const std::string& address, const Options& opt);
+    using FrameHandler = std::function<void(const Frame&)>;
+
+    explicit GrpcClient(const std::string& serverAddr);     // конструктор по умолчанию
+    GrpcClient(const std::string& serverAddr, Options opt); // с заданными опциями
     ~GrpcClient();
 
     void start(FrameHandler cb);
     void shutdown();
+
+    GrpcClient(const GrpcClient&)            = delete;
+    GrpcClient& operator=(const GrpcClient&) = delete;
 
 private:
     class Impl;

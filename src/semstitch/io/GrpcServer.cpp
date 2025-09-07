@@ -1,140 +1,196 @@
 #include "semstitch/io/GrpcServer.hpp"
 #include "semstitch.grpc.pb.h"
-#include <grpcpp/grpcpp.h>
 
-#include <condition_variable>
+#include <grpcpp/grpcpp.h>
+#include <zlib.h>
+
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <iostream>
 #include <mutex>
-#include <queue>
+#include <string>
 #include <thread>
 #include <vector>
-#include <atomic>
 
 namespace semstitch {
 
-struct BufferFrame {
-    std::vector<std::uint8_t> data;
-    std::uint32_t             w{0}, h{0};
-    PixelFmtPB                fmt{PixelFmtPB::GRAY8};
-    std::uint64_t             ts{0};
-};
+namespace {
+static std::uint64_t to_ns(std::chrono::steady_clock::time_point tp) {
+    using namespace std::chrono;
+    return duration_cast<nanoseconds>(tp.time_since_epoch()).count();
+}
+static std::uint32_t crc32_bytes(const void* data, std::size_t size) {
+    uLong crc = crc32(0L, Z_NULL, 0);
+    crc = crc32(crc, reinterpret_cast<const Bytef*>(data), static_cast<uInt>(size));
+    return static_cast<std::uint32_t>(crc);
+}
+static PixelFmtPB to_pb(PixelFormat f) {
+    switch (f) {
+        case PixelFormat::Gray8:  return PixelFmtPB::GRAY8;
+        case PixelFormat::RGB24:  return PixelFmtPB::RGB24;
+        case PixelFormat::RGBA32: return PixelFmtPB::RGBA32;
+        default:                  return PixelFmtPB::GRAY8;
+    }
+}
+} // namespace
 
-class GrpcServer::Impl final : public SemStitch::Service {
+class GrpcServer::Impl : public SemStitch::Service {
 public:
-    Impl(std::uint16_t port, Options opt) : opt_(opt) {
-        const std::string addr = "0.0.0.0:" + std::to_string(port);
+    Impl(std::uint16_t port, Options opt)
+        : opt_{opt}
+        , addr_("0.0.0.0:" + std::to_string(port))
+    {
         grpc::ServerBuilder b;
-        b.AddListeningPort(addr, grpc::InsecureServerCredentials());
+        b.AddListeningPort(addr_, grpc::InsecureServerCredentials());
         b.RegisterService(this);
         server_ = b.BuildAndStart();
-        std::cout << "[grpc-server] listening at " << addr << "\n";
+        std::cout << "[grpc-server] listening at " << addr_ << "\n";
 
-        if (opt_.heartbeatMs > 0) {
-            hbRun_.store(true);
-            hb_ = std::thread([this] {
-                using namespace std::chrono;
-                while (hbRun_.load()) {
-                    std::this_thread::sleep_for(milliseconds(opt_.heartbeatMs));
-                    if (!hbRun_.load()) break;
-                    std::size_t qsz = 0;
-                    {
-                        std::lock_guard lk(mx_);
-                        qsz = q_.size();
-                    }
-                    std::cout << "[grpc-server] queue=" << qsz << "\n";
+        running_ = true;
+        mon_ = std::thread([this]{
+            using namespace std::chrono_literals;
+            while (running_) {
+                {
+                    std::lock_guard<std::mutex> lk(m_);
+                    if (!queue_.empty())
+                        std::cout << "[grpc-server] queue=" << queue_.size() << "\n";
                 }
-            });
-        }
+                std::this_thread::sleep_for(1000ms);
+            }
+        });
     }
 
     ~Impl() override {
-        {
-            std::lock_guard lk(mx_);
-            stopped_ = true;
-            cv_.notify_all();
-        }
+        running_ = false;
+        cv_.notify_all();
         if (server_) server_->Shutdown();
-
-        hbRun_.store(false);
-        if (hb_.joinable()) hb_.join();
+        if (mon_.joinable()) mon_.join();
     }
 
-    void pushFrame(const Frame& f) {
-        BufferFrame bf;
-        bf.w   = f.width;
-        bf.h   = f.height;
-        bf.fmt = PixelFmtPB::GRAY8; // текущий симулятор отдаёт Gray8
-        bf.ts  = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   f.timestamp.time_since_epoch()).count();
-        bf.data.assign(f.data.begin(), f.data.end());
+    ::grpc::Status StreamFrames(::grpc::ServerContext* ctx,
+                                ::grpc::ServerReaderWriter<FrameChunk, FrameChunk>* stream) override
+    {
+        using namespace std::chrono;
 
-        std::lock_guard lk(mx_);
-        if ((int)q_.size() >= opt_.max_queue) {
-            if (opt_.dropOldest) {
-                if (!q_.empty()) q_.pop();
-                q_.push(std::move(bf));
-            } else {
-                // просто игнорируем новый кадр
+        std::atomic<bool> drain_running{true};
+        std::thread drain([&]{
+            FrameChunk dummy;
+            while (drain_running && stream->Read(&dummy)) {
+                // ignore inbound if any
             }
-        } else {
-            q_.push(std::move(bf));
+        });
+
+        while (running_ && !ctx->IsCancelled()) {
+            QItem item;
+            bool has_item = false;
+
+            {
+                std::unique_lock<std::mutex> lk(m_);
+                if (queue_.empty()) {
+                    cv_.wait_for(lk, milliseconds(opt_.heartbeatMs));
+                }
+                if (!queue_.empty()) {
+                    item = std::move(queue_.front());
+                    queue_.pop_front();
+                    has_item = true;
+                }
+            }
+
+            FrameChunk chunk;
+
+            if (has_item) {
+                chunk.set_width(item.w);
+                chunk.set_height(item.h);
+                chunk.set_format(to_pb(item.fmt));
+                chunk.set_timestamp_ns(item.ts_ns);
+
+                if (!item.data.empty()) {
+                    chunk.set_data(reinterpret_cast<const char*>(item.data.data()), item.data.size());
+                    const auto seq = seq_.fetch_add(1, std::memory_order_relaxed) + 1;
+                    chunk.set_seq(seq);
+                    chunk.set_crc32(crc32_bytes(item.data.data(), item.data.size()));
+                } else {
+                    chunk.clear_data();
+                    chunk.set_seq(seq_.load(std::memory_order_relaxed));
+                    chunk.set_crc32(0);
+                }
+
+                if (!stream->Write(chunk)) break;
+
+            } else {
+                // heartbeat
+                chunk.set_width(0);
+                chunk.set_height(0);
+                chunk.set_format(PixelFmtPB::GRAY8);
+                chunk.set_timestamp_ns(0);
+                chunk.clear_data();
+                chunk.set_seq(seq_.load(std::memory_order_relaxed));
+                chunk.set_crc32(0);
+
+                stream->Write(chunk);
+            }
+        }
+
+        drain_running = false;
+        if (drain.joinable()) drain.join();
+        return ::grpc::Status::OK;
+    }
+
+    void push(const Frame& f) {
+        QItem q;
+        q.w     = f.width;
+        q.h     = f.height;
+        q.fmt   = f.format;
+        q.ts_ns = to_ns(f.timestamp);
+
+        const std::size_t need = f.bytes();
+        q.data.resize(need);
+        if (need) std::memcpy(q.data.data(), f.data.data(), need);
+
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            if (static_cast<int>(queue_.size()) >= opt_.maxQueue) {
+                if (opt_.dropOldest && !queue_.empty()) queue_.pop_front();
+                else return; // drop newest
+            }
+            queue_.push_back(std::move(q));
         }
         cv_.notify_one();
     }
 
 private:
-    // bi-di streaming
-    grpc::Status StreamFrames(
-        grpc::ServerContext* ctx,
-        grpc::ServerReaderWriter<FrameChunk, FrameChunk>* stream) override
-    {
-        std::size_t sent = 0;
-        while (true) {
-            BufferFrame bf;
-            {
-                std::unique_lock lk(mx_);
-                cv_.wait(lk, [this]{ return stopped_ || !q_.empty(); });
-                if (stopped_ && q_.empty()) break;
-                bf = std::move(q_.front());
-                q_.pop();
-            }
+    struct QItem {
+        std::vector<std::uint8_t> data;
+        std::uint32_t w{0}, h{0};
+        PixelFormat   fmt{PixelFormat::Gray8};
+        std::uint64_t ts_ns{0};
+    };
 
-            FrameChunk out;
-            out.set_width(bf.w);
-            out.set_height(bf.h);
-            out.set_timestamp_ns(bf.ts);
-            out.set_format(bf.fmt);
-            out.set_data(reinterpret_cast<const char*>(bf.data.data()), bf.data.size());
-
-            if (!stream->Write(out)) break;
-            ++sent;
-            if (sent % 30 == 0) std::cout << "[grpc-server] streamed frames: " << sent << "\n";
-            if (ctx->IsCancelled()) break;
-        }
-        return grpc::Status::OK;
-    }
-
-    Options                       opt_;
+    Options opt_;
+    std::string addr_;
     std::unique_ptr<grpc::Server> server_;
-    std::queue<BufferFrame>       q_;
-    std::mutex                    mx_;
-    std::condition_variable       cv_;
-    bool                          stopped_{false};
 
-    std::atomic<bool> hbRun_{false};
-    std::thread       hb_;
+    std::mutex m_;
+    std::condition_variable cv_;
+    std::deque<QItem> queue_;
+
+    std::atomic<bool> running_{false};
+    std::atomic<std::uint64_t> seq_{0};
+
+    std::thread mon_;
 };
 
 GrpcServer::GrpcServer(std::uint16_t port)
-    : pimpl_(std::make_unique<Impl>(port, Options{})) {}
+    : p_(std::make_unique<Impl>(port, Options{})) {}
 
-GrpcServer::GrpcServer(std::uint16_t port, const Options& opt)
-    : pimpl_(std::make_unique<Impl>(port, opt)) {}
+GrpcServer::GrpcServer(std::uint16_t port, Options opt)
+    : p_(std::make_unique<Impl>(port, opt)) {}
 
 GrpcServer::~GrpcServer() = default;
 
-void GrpcServer::pushFrame(const Frame& f) { pimpl_->pushFrame(f); }
+void GrpcServer::pushFrame(const Frame& f) { p_->push(f); }
 
 } // namespace semstitch

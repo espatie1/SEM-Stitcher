@@ -12,7 +12,7 @@ add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/permissive->)
 
 find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED
-             COMPONENTS core imgproc features2d calib3d imgcodecs)
+             COMPONENTS core imgproc features2d calib3d imgcodecs highgui)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 
@@ -51,6 +51,13 @@ add_library(semstitch STATIC
     src/semstitch/io/GrpcServer.cpp
     src/semstitch/io/GrpcClient.cpp
     src/semstitch/io/ArtimagenSource.cpp  
+    src/semstitch/io/Recorder.cpp
+    src/semstitch/io/ViewportScannerSource.cpp
+    src/semstitch/align/PhaseCorrelator.cpp
+    src/semstitch/align/Refiner.cpp
+    src/semstitch/align/GridAlign.cpp
+    src/semstitch/align/GlobalSolver.cpp
+    src/semstitch/compose/Mosaic.cpp
     $<TARGET_OBJECTS:proto_objs>          
 )
 
@@ -76,8 +83,19 @@ target_link_libraries(semstitch
         artimagen                        
 )
 
-add_executable(sem-stitch-cli src/semstitch/cli/main.cpp)
-target_link_libraries(sem-stitch-cli PRIVATE semstitch opencv_imgcodecs)
+add_executable(sem-stitch-cli
+    src/semstitch/cli/main.cpp
+    src/semstitch/cli/modes.hpp
+    src/semstitch/cli/args.hpp
+    src/semstitch/cli/jitter_buffer.hpp
+    src/semstitch/cli/utils.cpp
+    src/semstitch/cli/utils.hpp
+    src/semstitch/cli/mode_simulate.cpp
+    src/semstitch/cli/mode_receive.cpp
+    src/semstitch/cli/mode_play.cpp
+)
+target_link_libraries(sem-stitch-cli PRIVATE semstitch ${OpenCV_LIBS})
+
 
 if(USE_IMGUI_VIEWER)
     find_package(glfw3 REQUIRED)

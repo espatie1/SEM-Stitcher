@@ -15,6 +15,10 @@ message FrameChunk {
   uint32      height       = 3;
   uint64      timestamp_ns = 4;
   PixelFmtPB  format       = 5;
+
+  // --- добавили:
+  uint64      seq          = 6;  // порядковый номер кадра на сервере
+  uint32      crc32        = 7;  // CRC32 от data (POLY=0xEDB88320)
 }
 
 service SemStitch {
