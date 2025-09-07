@@ -8,9 +8,11 @@
 namespace semstitch {
 
 namespace {
-// Оборачиваем данные кадра в Mat и конвертируем в float [0..1]
+/* Wrap frame data into a cv::Mat and convert to float in [0..1].
+   No extra copy for the 8-bit buffer: we reference external data,
+   which must stay valid during this call. */
 cv::Mat toFloatMat(const Frame& f) {
-    // Без копии: используем внешние данные (валидны в рамках вызова)
+    // No copy: use external bytes (valid for the duration of this call)
     cv::Mat m8(f.height, f.width, CV_8UC1,
                const_cast<std::uint8_t*>(f.data.data()));
     cv::Mat m32;
@@ -19,6 +21,11 @@ cv::Mat toFloatMat(const Frame& f) {
 }
 } // namespace
 
+/* Estimate frame-to-frame drift (translation) with phase correlation.
+   Preconditions:
+     - prev and curr have the same width/height
+     - pixel format is 8-bit grayscale (CV_8UC1)
+   Returns: subpixel shift (dx, dy) in pixels. */
 DriftVector CpuBackend::drift(const Frame& prev, const Frame& curr) {
     if (prev.width != curr.width || prev.height != curr.height) {
         throw std::runtime_error("CpuBackend::drift: frame sizes differ");
@@ -27,7 +34,7 @@ DriftVector CpuBackend::drift(const Frame& prev, const Frame& curr) {
     cv::Mat a = toFloatMat(prev);
     cv::Mat b = toFloatMat(curr);
 
-    // Окно Хэннинга для устойчивости phaseCorrelation
+    // Hanning window improves robustness of phaseCorrelate (less edge ringing)
     cv::Mat win;
     cv::createHanningWindow(win, a.size(), CV_32F);
 
@@ -35,8 +42,10 @@ DriftVector CpuBackend::drift(const Frame& prev, const Frame& curr) {
     return { shift.x, shift.y };
 }
 
+/* Compute a simple homography that represents only translation.
+   For now, we build it directly from the drift (no rotation/scale/shear). */
 Homography CpuBackend::match(const Frame& prev, const Frame& curr) {
-    // Пока строим чисто трансляционную гомографию из дрейфа
+    // For now we use pure translational homography derived from drift
     const DriftVector d = drift(prev, curr);
 
     Homography H{};

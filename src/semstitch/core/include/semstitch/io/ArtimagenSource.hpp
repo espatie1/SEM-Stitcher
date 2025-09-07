@@ -7,38 +7,38 @@
 #include <string>
 #include <vector>
 
-// C-интерфейс ARTIMAGEN
+// ARTIMAGEN C interface
 extern "C" {
 #include "libartimagen/artimagen.h" 
 }
 
-// C++-класс CImage (чтобы читать буфер). Если инклюд не найдётся,
-// можно заменить на: #include "third_party/artimagen/src/artimagen_i.h"
+// C++ class CImage (to read the buffer). If this include is missing,
+// you can replace with: #include "third_party/artimagen/src/artimagen_i.h"
 #include "libartimagen/artimagen_i.h"
 
 namespace semstitch {
 
 class ArtimagenSource {
 public:
-    // путь на будущее (сцена Lua/YAML); сейчас не обязателен
+    // Path for future use (Lua/YAML scene); not required right now
     explicit ArtimagenSource(const std::string& /*luaSceneFile*/ = "");
     ~ArtimagenSource();
 
-    // очередной кадр (Gray8)
+    // Get the next frame (Gray8)
     std::optional<Frame> next();
 
 private:
-    // фильтрация болтливых сообщений ARTIMAGEN
+    // Filter verbose ARTIMAGEN messages
     static void msgCallback(t_message* m);
 
-    // описатели ARTIMAGEN
+    // ARTIMAGEN descriptors
     t_gc_definition          gcDef_{};
     t_std_image_def_struct   imgDef_{};
 
     void* sample_{nullptr}; // CSample*
-    void* image_{nullptr};  // CImage* — используется временно внутри next()
+    void* image_{nullptr};  // CImage* — used temporarily inside next()
 
-    std::vector<std::uint8_t> scratch_; // 8-bit кадр на выход
+    std::vector<std::uint8_t> scratch_; // output 8-bit frame buffer
 };
 
 } // namespace semstitch

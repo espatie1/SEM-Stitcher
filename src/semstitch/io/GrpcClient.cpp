@@ -14,11 +14,14 @@
 namespace semstitch {
 
 namespace {
+/* Compute CRC32 over a byte buffer using zlib. */
 static std::uint32_t crc32_bytes(const void* data, std::size_t size) {
     uLong crc = crc32(0L, Z_NULL, 0);
     crc = crc32(crc, reinterpret_cast<const Bytef*>(data), static_cast<uInt>(size));
     return static_cast<std::uint32_t>(crc);
 }
+
+/* Map protobuf pixel format to internal enum. */
 static PixelFormat from_pb(PixelFmtPB f) {
     switch (f) {
         case PixelFmtPB::GRAY8:  return PixelFormat::Gray8;
@@ -58,7 +61,7 @@ private:
 
         while (running_) {
             grpc::ClientContext ctx;
-            auto stream = stub_->StreamFrames(&ctx); // bidi RW; мы читаем
+            auto stream = stub_->StreamFrames(&ctx); // bidirectional RW; client reads
 
             if (!stream) {
                 std::cerr << "[grpc-client] connect failed\n";

@@ -4,11 +4,12 @@
 
 namespace semstitch {
 
-/**
- * Локальная донастройка (hill-climb) в окрестности init (±radius_px), используя ZNCC.
- * Работает на одинаковых ROI (оба из Gray8), возвращает PairMatch с dx,dy и score=ZNCC.
- * Требует: roiA.size()==roiB.size().
- */
+/*
+  Local refinement (hill-climb) around 'init' within ±radius_px using ZNCC.
+  Works on equal-size ROIs (both from Gray8) and returns a PairMatch with dx, dy,
+  and score = ZNCC value.
+  Requirement: roiA.size() == roiB.size().
+*/
 PairMatch refineLocalZNCC(const cv::Mat& a_gray8,
                           const cv::Mat& b_gray8,
                           const cv::Rect& roiA,

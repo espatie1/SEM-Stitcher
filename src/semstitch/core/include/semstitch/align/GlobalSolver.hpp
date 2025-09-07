@@ -6,38 +6,38 @@
 
 namespace semstitch {
 
-/** Параметры решателя. */
+/** Solver options. */
 struct SolveOptions {
-    int    max_iters        = 15;     // максимум итераций IRLS
-    double huber_delta_px   = 3.0;    // порог Huber (px) для векторного резидуала (dx,dy)
-    double anchor_weight    = 1e6;    // «жесткость» фиксации (0,0) для тайла (0,0)
-    double zncc_pow         = 2.0;    // усиливать вес хороших ZNCC: w ~ (max(0,zncc))^zncc_pow
-    double min_use_zncc     = 0.10;   // игнорировать ребра с ZNCC ниже этого
-    double phase_resp_min   = 0.01;   // очень слабый нижний порог для response фаз-корр
-    double stop_eps         = 1e-4;   // относительная остановка по ||delta||
+    int    max_iters        = 15;     // maximum IRLS iterations
+    double huber_delta_px   = 3.0;    // Huber threshold (px) for vector residual (dx, dy)
+    double anchor_weight    = 1e6;    // "stiffness" of the anchor for tile (0,0) at (0,0)
+    double zncc_pow         = 2.0;    // boost good ZNCC: weight ~ (max(0, zncc))^zncc_pow
+    double min_use_zncc     = 0.10;   // ignore edges with ZNCC below this
+    double phase_resp_min   = 0.01;   // very weak lower threshold for phase correlation response
+    double stop_eps         = 1e-4;   // stopping condition by relative ||delta||
 };
 
-/** Результат глобального решения. */
+/** Global solution result. */
 struct SolveResult {
-    std::vector<cv::Point2d> poses;   // (x,y) для тайлов в row-major: r*cols+c
+    std::vector<cv::Point2d> poses;   // (x,y) for tiles in row-major order: r*cols + c
     int    iters{0};
-    double rmse_px{0.0};              // RMSE по всем использованным связям
+    double rmse_px{0.0};              // RMSE over all used edges
     int    used_edges{0};
     int    inliers{0};
     int    outliers{0};
-    std::string report;               // короткий текст-лог
+    std::string report;               // short text log
 };
 
 /**
- * Глобальное выравнивание по трансляциям.
- * rows, cols — размер сетки; edges берём из computePairMatches().
- * Возвращает позиции (x,y) всех тайлов, где (0,0) заякорен в (0,0).
+ * Global alignment by translations.
+ * rows, cols — grid size; edges are taken from computePairMatches().
+ * Returns positions (x, y) for all tiles, with tile (0,0) anchored at (0,0).
  */
 SolveResult solveGlobalTranslation(const AlignResult& matches,
                                    int rows, int cols,
                                    const SolveOptions& opt = {});
 
-/** Удобная инициализация поз по медианным шагам (dx по «right», dy по «down»). */
+/** Convenient initialization of poses using median steps (dx from "right", dy from "down"). */
 std::vector<cv::Point2d> initializeByMedians(const AlignResult& matches,
                                              int rows, int cols);
 

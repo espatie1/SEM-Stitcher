@@ -9,7 +9,7 @@
 
 namespace semstitch {
 
-// --- Снижаем болтливость сообщений библиотеки
+// --- Reduce library message verbosity
 void ArtimagenSource::msgCallback(t_message* m) {
     if (!m) return;
     switch (m->message) {
@@ -29,43 +29,43 @@ void ArtimagenSource::msgCallback(t_message* m) {
             }
         } break;
         default:
-            // подавляем шум
+            // suppress noise
             break;
     }
 }
 
 ArtimagenSource::ArtimagenSource(const std::string& /*luaSceneFile*/) {
-    // Конфиг логов/потоков библиотеки
+    // Configure library logging/threads
     if (AIGApp) {
         AIGApp->set_message_call_back(&ArtimagenSource::msgCallback);
         AIGApp->set_number_of_threads(std::max(2u, std::thread::hardware_concurrency()));
     }
 
-    // ---- Параметры выборки (упрощённые ради скорости старта)
+    // ---- Sampling parameters (simplified to start faster)
     gcDef_.sizex = 3000;                 // [nm]
     gcDef_.sizey = 3000;
-    gcDef_.number_of_grains = 80;        // было 300 — долго
+    gcDef_.number_of_grains = 80;        // was 300 — too slow
     gcDef_.grain_min_size   = 15;
     gcDef_.grain_max_size   = 60;
     gcDef_.ee_coefficient   = 0.0f;
     gcDef_.fs_density       = 0.0f;
 
-    // ---- Параметры изображения
-    imgDef_.sizex = 384;                 // 512 → 384 (быстрее)
+    // ---- Image parameters
+    imgDef_.sizex = 384;                 // 512 → 384 (faster)
     imgDef_.sizey = 384;
 
-    // Фон
+    // Background
     imgDef_.bg_min_gl = 0.10;
     imgDef_.bg_max_gl = 0.25;
     imgDef_.bg_dens_x = 8;
     imgDef_.bg_dens_y = 8;
 
-    // Пучок (PSF)
+    // Beam (PSF)
     imgDef_.beam_sigma        = 0.7f;
     imgDef_.beam_astig_ratio  = 1.0f;
     imgDef_.beam_astig_angle  = 0.0f;
 
-    // Вибрации
+    // Vibrations
     imgDef_.vib_pixel_dwell_time      = 500;
     imgDef_.vib_min_frequency         = 5.0f;
     imgDef_.vib_max_frequency         = 40.0f;
@@ -74,19 +74,19 @@ ArtimagenSource::ArtimagenSource(const std::string& /*luaSceneFile*/) {
     imgDef_.vib_pixel_dead_time       = 0;
     imgDef_.vib_line_dead_time        = 0;
 
-    // Шум/тон
+    // Noise / tone
     imgDef_.noise_sigma = 0.02;
     imgDef_.contrast    = 1.0;
     imgDef_.brightness  = 0.0;
 
-    // ---- Создаём выборку и «прогреваем» планы
+    // ---- Create a sample and warm up plans
     sample_ = generate_gc_sample(&gcDef_);
     if (!sample_) throw std::runtime_error("ARTIMAGEN: generate_gc_sample() failed");
 
     image_ = generate_standard_image(sample_, &imgDef_);
     if (!image_) throw std::runtime_error("ARTIMAGEN: generate_standard_image() failed (warm-up)");
 
-    // Прогрев завершён — освобождаем, в next() каждый раз создаём новое
+    // Warm-up done — free it; in next() we create a new one each time
     aig_destroy_image(image_);
     image_ = nullptr;
 
@@ -99,7 +99,7 @@ ArtimagenSource::~ArtimagenSource() {
 }
 
 std::optional<Frame> ArtimagenSource::next() {
-    // На каждый кадр — новое CImage (актуальные данные)
+    // For each frame — create a new CImage (fresh data)
     if (image_) { aig_destroy_image(image_); image_ = nullptr; }
 
     image_ = generate_standard_image(sample_, &imgDef_);
@@ -109,9 +109,9 @@ std::optional<Frame> ArtimagenSource::next() {
     const auto h = static_cast<std::uint32_t>(imgDef_.sizey);
     const auto N = static_cast<std::size_t>(w) * h;
 
-    // ВАЖНО: get_buffer() неконстантный → используем неконстантный указатель.
+    // IMPORTANT: get_buffer() is non-const → use a non-const object pointer.
     auto* img = static_cast<artimagen::CImage*>(image_);
-    const double* buf = img->get_buffer(); // NxM double, диапазон [0..1]
+    const double* buf = img->get_buffer(); // NxM double, range [0..1]
 
     scratch_.resize(N);
     for (std::size_t i = 0; i < N; ++i) {
@@ -121,7 +121,7 @@ std::optional<Frame> ArtimagenSource::next() {
         scratch_[i] = static_cast<std::uint8_t>(std::lround(v * 255.0));
     }
 
-    // Освобождаем CImage сразу — наружу отдаём только копию в scratch_
+    // Free CImage right away — we return only the copy stored in scratch_
     aig_destroy_image(image_);
     image_ = nullptr;
 

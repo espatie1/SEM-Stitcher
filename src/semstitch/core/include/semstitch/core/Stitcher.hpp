@@ -9,20 +9,20 @@
 
 namespace semstitch {
 
-/// Инкрементальный ститчер:
-/// - принимает кадры (Gray8);
-/// - оценивает сдвиг curr относительно prev (phaseCorrelate);
-/// - snapshot() вызывает composeMosaic() (Hann-веса + нормализация).
+/// Incremental stitcher:
+/// - accepts frames (Gray8);
+/// - estimates the shift of `curr` relative to `prev` (phaseCorrelate);
+/// - snapshot() calls composeMosaic() (Hann weights + normalization).
 class Stitcher {
 public:
     struct Options {
-        // ограничение размера истории (чтобы не раздувать память)
+        // limit the history size (avoid growing memory)
         int  maxTiles         = 2000;
 
-        // параметры оценки сдвига
-        bool useApodForPhase  = true; // окно Ханна перед phaseCorrelate
+        // shift estimation parameters
+        bool useApodForPhase  = true; // Hann window before phaseCorrelate
 
-        // опции компоновщика
+        // compositor options
         ComposeOptions compose{
             /*use_hann_weight=*/true,
             /*normalize_each_tile=*/true,
@@ -32,17 +32,17 @@ public:
         };
     };
 
-    // ВАЖНО: без дефолтного аргумента здесь — иначе GCC ругается
+    // IMPORTANT: no default argument here — otherwise GCC complains
     explicit Stitcher(IBackend& backend);
     Stitcher(IBackend& backend, const Options& opt);
 
-    /// добавить кадр в поток
+    /// add a frame to the stream
     void pushFrame(const Frame& f);
 
-    /// получить текущую мозаику (8-бит, один канал)
+    /// get the current mosaic (8-bit, single channel)
     cv::Mat snapshot() const;
 
-    /// поменять опции компоновки на лету
+    /// change compose options on the fly
     void setComposeOptions(const ComposeOptions& co);
 
     Options options() const { return opt_; }
@@ -51,21 +51,21 @@ private:
     IBackend& backend_;
     Options   opt_;
 
-    // накопленные тайлы и их позы (в координатах мозаики; double — субпиксель)
+    // accumulated tiles and their poses (in mosaic coordinates; double = subpixel)
     std::vector<cv::Mat>     tiles_;   // CV_8UC1
-    std::vector<cv::Point2d> poses_;   // левый-верхний угол
+    std::vector<cv::Point2d> poses_;   // top-left corner
 
-    // для инкрементальной оценки
+    // for incremental estimation
     cv::Mat      lastTile_;            // CV_8UC1
     cv::Point2d  lastPose_{0.0, 0.0};
     bool         haveLast_{false};
 
     mutable std::mutex mtx_;
 
-    // оценка относительного сдвига curr относительно prev (prev -> curr)
+    // estimate relative shift of curr w.r.t. prev (prev -> curr)
     cv::Point2d estimateOffset(const cv::Mat& prev8u, const cv::Mat& curr8u) const;
 
-    // обрезаем историю, если вышла за лимит
+    // trim history if it exceeds the limit
     void enforceHistoryLimitLocked();
 };
 

@@ -4,6 +4,14 @@
 #include <iostream>
 #include <string>
 
+/*
+  CLI entry point.
+
+  Modes:
+    - simulate : generate frames and stream via gRPC.
+    - receive  : connect to a gRPC server, build a live mosaic.
+    - play     : read frames from a file/folder or restream them.
+*/
 static void print_usage() {
     std::cout
         << "Usage:\n"
@@ -12,8 +20,8 @@ static void print_usage() {
         << "                          [--latency=200] [--bufcap=256] [--drop=oldest|newest]\n"
         << "                          [--health=2000] [--save=mosaic.png] [--view]\n"
         << "  sem-stitch-cli play     --file=in.sst [--fps=30|--realtime] [--port=50051] [--save=mosaic.png]\n"
-        << "     play без --port делает локальную сборку мозаики и сохраняет PNG;\n"
-        << "     play с --port играет файл наружу по gRPC (как simulate).\n";
+        << "     play without --port builds a local mosaic and saves PNG;\n"
+        << "     play with --port streams the file via gRPC (like simulate).\n";
 }
 
 int main(int argc, char** argv)

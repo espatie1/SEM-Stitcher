@@ -7,29 +7,29 @@
 
 namespace semstitch {
 
-/** Описание сетки. */
+/** Grid specification. */
 struct GridSpec {
     int rows{0};
     int cols{0};
-    double overlap_percent{10.0};        // % перекрытия по каждой оси
-    double stage_repeatability_px{3.0};   // повторяемость стола (px)
+    double overlap_percent{10.0};        // % overlap along each axis
+    double stage_repeatability_px{3.0};   // stage repeatability (px)
 };
 
-/** Рёбра матчинга между соседями. */
+/** Matching edges between neighboring tiles. */
 struct PairEdge {
     int r1{0}, c1{0};
     int r2{0}, c2{0};
-    PairMatch coarse;  // phase corr
+    PairMatch coarse;  // phase correlation
     PairMatch fine;    // ZNCC refine
     bool      ok{false};
-    std::string direction; // "right" или "down"
+    std::string direction; // "right" or "down"
 };
 
 struct AlignResult {
-    std::vector<PairEdge> edges; // только соседние r,c → r,c+1 и r,c → r+1,c
+    std::vector<PairEdge> edges; // only neighbor pairs: r,c → r,c+1 and r,c → r+1,c
 };
 
-/** Построить парные соответствия по сетке (только translation). */
+/** Build pairwise matches over the grid (translation only). */
 AlignResult computePairMatches(const std::vector<cv::Mat>& tiles_gray8,
                                const GridSpec& spec,
                                int apod_win = 16,

@@ -24,12 +24,14 @@
 
 // ---------------- helpers ----------------
 
+/* Case-insensitive string equality */
 static bool ieq(const std::string& a, const std::string& b) {
     if (a.size()!=b.size()) return false;
     for (size_t i=0;i<a.size();++i) if (std::tolower(a[i])!=std::tolower(b[i])) return false;
     return true;
 }
 
+/* Split a list like "png,jpg; tiff  bmp" by comma/semicolon/space */
 static std::vector<std::string> split_list(const std::string& s) {
     std::vector<std::string> out;
     std::string cur;
@@ -42,6 +44,7 @@ static std::vector<std::string> split_list(const std::string& s) {
     return out;
 }
 
+/* Get lowercase extension from a filesystem path without the leading dot */
 static std::string ext_of(const std::filesystem::path& p) {
     std::string e = p.extension().string();
     if (!e.empty() && e[0]=='.') e.erase(0,1);
@@ -49,6 +52,7 @@ static std::string ext_of(const std::filesystem::path& p) {
     return e;
 }
 
+/* List image files in a folder with allowed extensions (empty = allow all) */
 static std::vector<std::filesystem::path>
 list_images_in_folder(const std::filesystem::path& folder,
                       const std::vector<std::string>& allow_exts)
@@ -70,7 +74,11 @@ list_images_in_folder(const std::filesystem::path& folder,
     return files;
 }
 
-// Преобразование любого поддерживаемого формата в CV_8UC1
+/* Convert any supported input image to CV_8UC1 grayscale buffer.
+   - Reads file with imread (unchanged).
+   - Converts to gray if needed.
+   - Normalizes dynamic range to [0..255] using min/max.
+   - Writes bytes into 'out' and returns true on success. */
 static bool load_as_gray8(const std::filesystem::path& p,
                           std::vector<std::uint8_t>& out,
                           std::uint32_t& w, std::uint32_t& h)
@@ -100,8 +108,10 @@ static bool load_as_gray8(const std::filesystem::path& p,
     cv::minMaxLoc(gray32f, &mn, &mx);
     cv::Mat u8;
     if (mx > mn) {
+        // Normalize to [0..255] and convert to 8-bit
         gray32f.convertTo(u8, CV_8U, 255.0/(mx-mn), -mn*255.0/(mx-mn));
     } else {
+        // Flat image → fill with zeros
         u8 = cv::Mat(gray32f.size(), CV_8U, cv::Scalar(0));
     }
 
@@ -115,21 +125,21 @@ static bool load_as_gray8(const std::filesystem::path& p,
 
 int run_play(int argc, char** argv)
 {
-    const std::string file   = argValue(argc, argv, "file", "");     // .sst (пока отключено)
-    const std::string folder = argValue(argc, argv, "folder", "");   // папка с кадрами
+    const std::string file   = argValue(argc, argv, "file", "");     // .sst (disabled in this build)
+    const std::string folder = argValue(argc, argv, "folder", "");   // folder with frames
     const std::string extstr = argValue(argc, argv, "ext", "png,jpg,jpeg,tif,tiff,bmp");
     const bool withView      = argHas(argc, argv, "view");
     const int fps            = std::max(1, argValueInt(argc, argv, "fps", 30));
-    const int port           = argValueInt(argc, argv, "port", -1);  // >=0 → стрим наружу gRPC
+    const int port           = argValueInt(argc, argv, "port", -1);  // >=0 → stream out via gRPC
     const std::string save   = argValue(argc, argv, "save", "mosaic.png");
 
-    // новые флаги длительного проигрывания
+    // Extra flags for long playback sessions
     const bool loopFlag      = argHas(argc, argv, "loop");
     const int  repeatArg     = argValueInt(argc, argv, "repeat", 1);
-    const int  durationSec   = std::max(0, argValueInt(argc, argv, "duration", 0)); // секунд
+    const int  durationSec   = std::max(0, argValueInt(argc, argv, "duration", 0)); // seconds
 
     int repeat = std::max(1, repeatArg);
-    if (loopFlag) repeat = INT_MAX; // условно бесконечно, пока не остановят вручную или по duration
+    if (loopFlag) repeat = INT_MAX; // virtually infinite; stops by Enter or by 'duration'
 
     if (folder.empty() && file.empty()) {
         std::cerr
@@ -140,7 +150,7 @@ int run_play(int argc, char** argv)
     }
 
     if (!file.empty()) {
-        std::cerr << "[play] .sst воспроизведение отключено в этой сборке. Используйте --folder.\n";
+        std::cerr << "[play] .sst mode is disabled in this build. Try --folder.\n";
         return 1;
     }
 
@@ -167,7 +177,7 @@ int run_play(int argc, char** argv)
         std::uint32_t w=0, h=0;
 
         std::atomic<bool> running{true};
-        // запуск фонового ожидания Enter — удобно для бесконечного стрима
+        // Start a background "press Enter to stop" waiter — useful for infinite streams
         if (loopFlag || repeat>1 || durationSec>0) {
             std::thread([&running](){
                 std::cout << "[play] press Enter to stop.\n";
@@ -261,10 +271,12 @@ int run_play(int argc, char** argv)
             if (withView) {
                 cv::Mat snap = stitch.snapshot();
                 if (snap.empty()) {
+                    // Show a simple "Waiting…" screen until we have something to display
                     cv::Mat empty(480, 640, CV_8UC1, cv::Scalar(0));
                     cv::putText(empty, "Waiting…", {40,240}, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255), 2, cv::LINE_AA);
                     cv::imshow("SEM Player", displayize(empty));
                 } else {
+                    // Fit the mosaic into ~1000 px max side for display
                     cv::Mat shown;
                     double scale = 1.0;
                     int side = std::max(snap.cols, snap.rows);

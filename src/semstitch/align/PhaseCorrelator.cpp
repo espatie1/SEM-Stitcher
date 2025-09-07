@@ -3,12 +3,32 @@
 
 namespace semstitch {
 
+/* Convert an 8-bit grayscale image (CV_8UC1) to 32-bit float [0..1]. */
 static cv::Mat to32f(const cv::Mat& m8) {
     CV_Assert(m8.type() == CV_8UC1);
     cv::Mat f; m8.convertTo(f, CV_32F, 1.0/255.0);
     return f;
 }
 
+/*
+  Estimate translation (dx, dy) between two grayscale tiles using phase correlation.
+
+  Inputs:
+    - a_gray8, b_gray8 : source images (CV_8UC1).
+    - roiA, roiB       : same-size regions of interest inside A and B.
+    - hanning_win      : if > 0, enable a full-size Hanning window (apodization).
+
+  Steps:
+    1) Convert ROIs to CV_32F in [0..1].
+    2) Optionally create a Hanning window of the same size as ROI.
+    3) Call cv::phaseCorrelate to get shift (dx, dy) and a response score.
+
+  Notes:
+    - The Hanning window here is used as a simple on/off switch. The exact
+      radius is not tuned yet (can be refined later).
+    - 'response' is higher for a clearer/stronger match.
+    - 'ok' is true if the response is a finite number.
+*/
 PairMatch phaseCorrelateGray8(const cv::Mat& a_gray8,
                               const cv::Mat& b_gray8,
                               const cv::Rect& roiA,
@@ -27,8 +47,8 @@ PairMatch phaseCorrelateGray8(const cv::Mat& a_gray8,
 
     cv::Mat win;
     if (hanning_win > 0) {
-        // полный Хэннинг по размеру ROI — это ок; отдельно "hanning_win" оставляем
-        // как просто переключатель аподизации (тонкая настройка окна может быть позже)
+        // Use a full-size Hanning window for the given ROI size.
+        // 'hanning_win' acts as an enable flag for apodization for now.
         cv::createHanningWindow(win, A.size(), CV_32F);
     }
 

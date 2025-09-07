@@ -9,13 +9,13 @@
 
 namespace semstitch {
 
-// Очень простой бинарный формат SST1:
+// Very simple binary format SST1:
 //
 // Header:
 //   char     magic[4] = 'S','S','T','1'
 //   uint32_t version  = 1
 //
-// Для каждого кадра — Record:
+// For each frame — Record:
 //   uint32_t width
 //   uint32_t height
 //   uint8_t  format (PixelFormat)
@@ -26,15 +26,15 @@ namespace semstitch {
 //   uint32_t data_size
 //   uint8_t  data[data_size]
 //
-// Всё little-endian (как на x86/amd64).
+// Everything is little-endian (like x86/amd64).
 
 class FrameRecorder {
 public:
     explicit FrameRecorder(const std::string& path);
     ~FrameRecorder();
 
-    // crc32 и seq — то, что мы уже считаем на стороне сервера/клиента;
-    // если не нужны, можно передавать 0.
+    // crc32 and seq are values already computed on server/client side;
+    // if not needed, you can pass 0.
     bool write(const Frame& f, std::uint64_t seq, std::uint32_t crc32);
 
 private:
@@ -47,9 +47,9 @@ public:
     explicit FramePlayer(const std::string& path);
     ~FramePlayer();
 
-    // Читает следующий кадр.
-    // Буфер данных возвращается через scratch, чтобы Frame мог ссылаться на него.
-    // Возвращает false — конец файла или ошибка.
+    // Read the next frame.
+    // The data buffer is returned via 'scratch' so that Frame can reference it.
+    // Returns false on end-of-file or error.
     bool readNext(Frame& out, std::vector<std::uint8_t>& scratch,
                   std::uint64_t* out_seq = nullptr,
                   std::uint64_t* out_ts_ns = nullptr,

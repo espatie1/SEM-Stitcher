@@ -15,12 +15,12 @@ struct RecordHeader {
     uint32_t width;         // 4
     uint32_t height;        // 4
     uint8_t  format;        // 1
-    uint8_t  pad[3];        // 3 (делаем кратно 4; с pack(1) не обязательно, но оставим для стабильности)
+    uint8_t  pad[3];        // 3 (align to 4; with pack(1) not required, but kept for stability)
     uint64_t timestamp_ns;  // 8
     uint64_t seq;           // 8
     uint32_t crc32;         // 4
     uint32_t data_size;     // 4
-}; // ИТОГО: 36 байт при pack(1)
+}; // TOTAL: 36 bytes with pack(1)
 #pragma pack(pop)
 
 static_assert(sizeof(FileHeader)   == 8,  "FileHeader size unexpected");
@@ -110,7 +110,7 @@ bool FramePlayer::readNext(Frame& out, std::vector<std::uint8_t>& scratch,
     out.width  = rh.width;
     out.height = rh.height;
     out.format = static_cast<PixelFormat>(rh.format);
-    out.timestamp = std::chrono::steady_clock::time_point{}; // player сам задаёт ритм
+    out.timestamp = std::chrono::steady_clock::time_point{}; // the player controls the pacing
     out.data   = std::span<const std::uint8_t>(scratch.data(), scratch.size());
 
     return true;

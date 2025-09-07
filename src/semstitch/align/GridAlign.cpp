@@ -2,8 +2,26 @@
 #include <opencv2/imgproc.hpp>
 #include <cmath>
 
+/*
+  Build pairwise matches between neighboring tiles in a grid.
+
+  For each tile, we compare it with:
+    - the RIGHT neighbor (same row, next column),
+    - the DOWN neighbor (next row, same column).
+
+  We take only the overlap area between tiles.
+  First we run phase correlation (coarse dx, dy and a response score).
+  Then we refine with local ZNCC around the coarse shift.
+  We keep an edge if scores pass thresholds and the shift is within a
+  mechanical bound (stage repeatability).
+
+  Output is an AlignResult that holds a list of PairEdge records.
+*/
+
 namespace semstitch {
 
+/* Clamp a rectangle to image bounds.
+   If the rectangle is empty after clamping, return an empty Rect. */
 static cv::Rect safeRect(const cv::Size& sz, int x, int y, int w, int h) {
     x = std::max(0, x); y = std::max(0, y);
     w = std::min(w, sz.width  - x);
@@ -12,6 +30,14 @@ static cv::Rect safeRect(const cv::Size& sz, int x, int y, int w, int h) {
     return cv::Rect(x,y,w,h);
 }
 
+/* Pick ROIs that cover the expected overlap area between two tiles.
+   If horizontal == true:
+     - roiA is the right strip of A, roiB is the left strip of B.
+   Else (vertical):
+     - roiA is the bottom strip of A, roiB is the top strip of B.
+
+   overlap_percent is given in percent of width/height.
+   We also enforce a small minimum (8 px) so the strip is not too thin. */
 static void pickOverlapROIs(const cv::Size& sz,
                             double overlap_percent,
                             bool horizontal,
@@ -29,6 +55,20 @@ static void pickOverlapROIs(const cv::Size& sz,
     }
 }
 
+/*
+  Compute pair matches for all neighbor pairs in a grid.
+
+  tiles_gray8   : vector of tiles (grayscale, CV_8UC1), size must be rows*cols.
+  spec          : grid specification (rows, cols, expected overlap, etc.).
+  apod_win      : apodization window radius (pixels) for phase correlation.
+  refine_radius : ZNCC local search radius around coarse (dx, dy).
+  phase_resp_thresh : minimal phase correlation response to accept coarse match.
+  zncc_thresh        : minimal ZNCC score to accept refined match.
+  bound_factor       : limit on |dx| and |dy|, scaled by stage_repeatability_px.
+                       (prevents unrealistic large shifts)
+
+  Return: AlignResult with all PairEdge records (right/down edges).
+*/
 AlignResult computePairMatches(const std::vector<cv::Mat>& tiles_gray8,
                                const GridSpec& spec,
                                int apod_win,
@@ -48,7 +88,7 @@ AlignResult computePairMatches(const std::vector<cv::Mat>& tiles_gray8,
             const cv::Mat& A = tiles_gray8[idx(r,c)];
             CV_Assert(!A.empty() && A.type()==CV_8UC1);
 
-            // RIGHT neighbor
+            // RIGHT neighbor: compare A(r,c) with B(r,c+1)
             if (c+1 < spec.cols) {
                 const cv::Mat& B = tiles_gray8[idx(r,c+1)];
                 CV_Assert(B.size()==A.size() && B.type()==CV_8UC1);
@@ -60,12 +100,14 @@ AlignResult computePairMatches(const std::vector<cv::Mat>& tiles_gray8,
 
                 PairEdge e; e.r1=r; e.c1=c; e.r2=r; e.c2=c+1; e.direction="right";
 
+                // Coarse shift by phase correlation (also gives a response score)
                 e.coarse = phaseCorrelateGray8(A, B, roiA, roiB, apod_win);
 
-                // ограничение по механике (|dx|/|dy| не должны быть слишком большими)
+                // Mechanical bound: |dx| and |dy| should not be too large
                 double bound = bound_factor * std::max(1.0, spec.stage_repeatability_px);
                 bool inBound = (std::abs(e.coarse.dx) <= bound) && (std::abs(e.coarse.dy) <= bound);
 
+                // If coarse is valid and inside bounds, refine with local ZNCC
                 if (e.coarse.ok && e.coarse.score >= phase_resp_thresh && inBound) {
                     e.fine = refineLocalZNCC(A, B, roiA, roiB,
                                              cv::Point2d(e.coarse.dx, e.coarse.dy),
@@ -77,7 +119,7 @@ AlignResult computePairMatches(const std::vector<cv::Mat>& tiles_gray8,
                 out.edges.push_back(e);
             }
 
-            // DOWN neighbor
+            // DOWN neighbor: compare A(r,c) with B(r+1,c)
             if (r+1 < spec.rows) {
                 const cv::Mat& B = tiles_gray8[idx(r+1,c)];
                 CV_Assert(B.size()==A.size() && B.type()==CV_8UC1);
@@ -89,11 +131,14 @@ AlignResult computePairMatches(const std::vector<cv::Mat>& tiles_gray8,
 
                 PairEdge e; e.r1=r; e.c1=c; e.r2=r+1; e.c2=c; e.direction="down";
 
+                // Coarse shift by phase correlation (also gives a response score)
                 e.coarse = phaseCorrelateGray8(A, B, roiA, roiB, apod_win);
 
+                // Same mechanical bound check for (dx, dy)
                 double bound = bound_factor * std::max(1.0, spec.stage_repeatability_px);
                 bool inBound = (std::abs(e.coarse.dx) <= bound) && (std::abs(e.coarse.dy) <= bound);
 
+                // Refine only if coarse is good and inside bounds
                 if (e.coarse.ok && e.coarse.score >= phase_resp_thresh && inBound) {
                     e.fine = refineLocalZNCC(A, B, roiA, roiB,
                                              cv::Point2d(e.coarse.dx, e.coarse.dy),

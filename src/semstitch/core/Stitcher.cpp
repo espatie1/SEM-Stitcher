@@ -21,22 +21,22 @@ static cv::Mat toGray8View(const Frame& f) {
 
 void Stitcher::pushFrame(const Frame& f) {
     if (f.format != PixelFormat::Gray8 || f.width == 0 || f.height == 0) {
-        // поддерживаем только 8-битный серый и валидные размеры
+        // we support only 8-bit grayscale and valid sizes
         return;
     }
 
     cv::Mat view = toGray8View(f);
-    cv::Mat tile = view.clone(); // отделяемся от внешнего буфера
+    cv::Mat tile = view.clone(); // detach from the external buffer
 
     std::lock_guard<std::mutex> lk(mtx_);
 
     cv::Point2d pose(0.0, 0.0);
     if (!haveLast_) {
-        // первый тайл — в (0,0)
+        // the first tile goes to (0,0)
         pose = cv::Point2d(0.0, 0.0);
         haveLast_ = true;
     } else {
-        // инкрементальная оценка сдвига
+        // incremental shift estimation
         cv::Point2d d = estimateOffset(lastTile_, tile);
         pose = lastPose_ + d;
     }
@@ -71,8 +71,8 @@ cv::Point2d Stitcher::estimateOffset(const cv::Mat& prev8u, const cv::Mat& curr8
     }
 
     cv::Point2d shift = cv::phaseCorrelate(a32, b32);
-    // phaseCorrelate возвращает «как сдвинуть b, чтобы совпало с a»
-    // нужно смещение prev->curr → берём отрицательное
+    // phaseCorrelate returns “how to shift b to match a”
+    // we need displacement prev->curr → take the negative
     return cv::Point2d(-shift.x, -shift.y);
 }
 

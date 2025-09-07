@@ -10,14 +10,14 @@ namespace semstitch {
 class GrpcServer {
 public:
     struct Options {
-        int   maxQueue        = 256;   // предел очереди кадров
-        bool  dropOldest      = true;  // true: выталкивать старые; false: отбрасывать новые
-        int   heartbeatMs     = 1000;  // период heartbeats, если нет данных
-        bool  enableCompression = false; // зарезервировано (grpc-сжатие здесь не включаем)
+        int   maxQueue          = 256;   // maximum size of the frame queue
+        bool  dropOldest        = true;  // true: evict oldest; false: drop newest
+        int   heartbeatMs       = 1000;  // heartbeat period when no data (ms)
+        bool  enableCompression = false; // reserved (do not enable gRPC compression here)
     };
 
-    explicit GrpcServer(std::uint16_t port = 50051);            // конструктор по умолчанию
-    GrpcServer(std::uint16_t port, Options opt);                // с заданными опциями
+    explicit GrpcServer(std::uint16_t port = 50051); // constructor with default options
+    GrpcServer(std::uint16_t port, Options opt);     // constructor with custom options
     ~GrpcServer();
 
     void pushFrame(const Frame& f);

@@ -13,12 +13,35 @@
 #include <string>
 #include <algorithm>
 
+/*
+  CLI mode: simulate a frame source and stream frames via gRPC.
+
+  Modes:
+    - sim=basic : synthetic frames from Artimagen (static generator).
+    - sim=scan  : viewport scanner over a large master image (with drift/jitter).
+
+  Options (common):
+    --net=fast|balanced|robust  : server queue/heartbeat/compression profile
+    --port=50051                : TCP port to listen on
+    --fps=15                    : send rate (frames per second)
+
+  Options (scan mode):
+    --grid=COLSxROWS   e.g. 5x5
+    --tilew, --tileh   tile size in pixels
+    --overlap          fractional overlap [0..0.95]
+    --driftx, --drifty average drift per frame (pixels)
+    --jitter           random jitter sigma (pixels)
+    --flicker          photometric flicker amplitude [0..1]
+    --masterw, --masterh  size of the master image for scanning
+*/
+
 int run_simulate(int argc, char** argv) {
     const std::string net  = argValue(argc, argv, "net", "balanced");
     const int port         = argValueInt(argc, argv, "port", 50051);
     const int fps          = std::max(1, argValueInt(argc, argv, "fps", 15));
     const std::string sim  = argValue(argc, argv, "sim", "basic"); // basic|scan
 
+    // Choose gRPC server options based on the network profile
     semstitch::GrpcServer::Options so{};
     if (net == "fast")      { so.maxQueue=32;  so.dropOldest=true; so.heartbeatMs=1500; so.enableCompression=false; }
     else if (net=="robust") { so.maxQueue=512; so.dropOldest=true; so.heartbeatMs=750;  so.enableCompression=true;  }
@@ -29,18 +52,19 @@ int run_simulate(int argc, char** argv) {
               << ", mode=" << sim << "\n";
 
     semstitch::GrpcServer server(static_cast<std::uint16_t>(port), so);
-    const auto frameDelay = std::chrono::milliseconds(1000 / fps);
+    const auto frameDelay = std::chrono::milliseconds(1000 / fps); // pacing
 
     try {
         std::unique_ptr<semstitch::ArtimagenSource> basic;
         std::unique_ptr<semstitch::ViewportScannerSource> scan;
 
         if (sim == "scan") {
+            // Configure the viewport scanner (tiles over a big master image)
             semstitch::ViewportScannerSource::Options o{};
             o.tileW = argValueInt(argc, argv, "tilew", 512);
             o.tileH = argValueInt(argc, argv, "tileh", 512);
             {
-                // grid=CxR
+                // grid = COLS x ROWS (e.g., "5x5")
                 std::string g = argValue(argc, argv, "grid", "5x5");
                 int xPos = (int)g.find('x');
                 if (xPos>0) {
@@ -57,13 +81,15 @@ int run_simulate(int argc, char** argv) {
             o.masterH      = argValueInt(argc, argv, "masterh", 4096);
             scan = std::make_unique<semstitch::ViewportScannerSource>(o);
         } else {
+            // Basic synthetic source from Artimagen config
             basic = std::make_unique<semstitch::ArtimagenSource>("resources/config/artimagen/default.yaml");
         }
 
+        // Main loop: produce frames and push to the gRPC server
         int sent = 0;
         while (true) {
             auto f = (scan ? scan->next() : basic->next());
-            if (!f) break;
+            if (!f) break; // source finished
             server.pushFrame(*f);
             if ((++sent % fps) == 0) std::cout << "[simulate] sent frames: " << sent << "\n";
             std::this_thread::sleep_for(frameDelay);

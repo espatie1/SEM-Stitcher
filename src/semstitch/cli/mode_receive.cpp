@@ -29,7 +29,20 @@
 #define SEMSTITCH_GIT_SHA "unknown"
 #endif
 
-// ------------ маленькие утилиты для манифеста ------------
+/* =========================================================
+   CLI mode: receive frames via gRPC and build a mosaic.
+
+   Flow:
+     - Configure network profile and client options.
+     - Receive frames → push into a jitter buffer.
+     - Consumer thread pops frames and feeds Stitcher.
+     - Optional viewer window (mosaic / last frame).
+     - Periodic health log.
+     - Save final mosaic and a JSON manifest (metadata, stats). */
+
+// ------------ small helpers for manifest ------------
+
+/* Current UTC time in ISO-8601 */
 static std::string iso_utc_now() {
     using namespace std::chrono;
     auto now = system_clock::now();
@@ -44,6 +57,8 @@ static std::string iso_utc_now() {
     os << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
     return os.str();
 }
+
+/* Random hex ID (for run/session identification) */
 static std::string rand_id() {
     std::mt19937_64 rng{std::random_device{}()};
     std::uniform_int_distribution<unsigned long long> d;
@@ -51,6 +66,8 @@ static std::string rand_id() {
     os << std::hex << d(rng) << d(rng);
     return os.str();
 }
+
+/* Minimal JSON string escaper */
 static std::string jesc(const std::string& s) {
     std::string o; o.reserve(s.size()+8);
     for (char c: s) {
@@ -65,6 +82,8 @@ static std::string jesc(const std::string& s) {
     }
     return o;
 }
+
+/* Join argv into a single command-line string */
 static std::string join_argv(int argc, char** argv) {
     std::ostringstream os;
     for (int i=0;i<argc;++i) {
@@ -73,17 +92,22 @@ static std::string join_argv(int argc, char** argv) {
     }
     return os.str();
 }
+
+/* Write text to file (creates parent directories) */
 static void write_text_file(const std::filesystem::path& p, const std::string& txt) {
     std::filesystem::create_directories(p.parent_path());
     std::ofstream f(p, std::ios::binary);
     f << txt;
 }
+
+/* Default output directory for a run, e.g. "runs/receive_2025_09_07T12_34_56Z_<id>" */
 static std::string default_outdir(const std::string& mode) {
     std::string stamp = iso_utc_now(); // 2025-09-07T12:34:56Z
     for (auto& c: stamp) if (c==':' || c=='-') c = '_';
     return std::string("runs/") + mode + "_" + stamp + "_" + rand_id();
 }
-// минимальный CRC32 для артефактов
+
+/* Minimal CRC32 for artifact files (manifest) */
 static std::uint32_t crc32_update(std::uint32_t crc, const unsigned char* buf, std::size_t len) {
     static std::uint32_t table[256]; static bool init=false;
     if (!init) {
@@ -97,6 +121,8 @@ static std::uint32_t crc32_update(std::uint32_t crc, const unsigned char* buf, s
     for (std::size_t i=0;i<len;++i) crc = table[(crc ^ buf[i]) & 0xFFU] ^ (crc >> 8);
     return crc ^ 0xFFFFFFFFU;
 }
+
+/* Compute CRC32 (hex) of a file; empty string if not readable */
 static std::string crc32_file_hex(const std::filesystem::path& p) {
     std::ifstream f(p, std::ios::binary);
     if (!f) return "";
@@ -120,7 +146,7 @@ int run_receive(int argc, char** argv) {
 
     const std::string net  = argValue(argc, argv, "net", "balanced");
 
-    // 1) профиль сети → опции клиента
+    // 1) Choose network profile → set client options
     semstitch::GrpcClient::Options co{};
     if (net == "fast") {
         co.reconnectInitialMs = 200; co.reconnectMaxMs = 2000; co.idleLogMs = 4000; co.enableCompression = false; co.printHeartbeat = true;
@@ -130,7 +156,7 @@ int run_receive(int argc, char** argv) {
         co.reconnectInitialMs = 250; co.reconnectMaxMs = 5000; co.idleLogMs = 2500; co.enableCompression = true;  co.printHeartbeat = true;
     }
 
-    // 2) приёмные параметры
+    // 2) Receiver parameters
     const std::string serverAddr = argValue(argc, argv, "server", "localhost:50051");
     std::atomic<int> targetLatencyMs{ std::max(0, argValueInt(argc, argv, "latency", 200)) };
     const int bufcap             = std::max(8, argValueInt(argc, argv, "bufcap", 256));
@@ -159,20 +185,20 @@ int run_receive(int argc, char** argv) {
               << ", outdir=" << outdir
               << "\n";
 
-    // 3) stitcher
+    // 3) Stitcher
     auto backend  = semstitch::makeBackend(semstitch::BackendType::CPU);
     semstitch::Stitcher stitch(*backend);
 
-    // 4) джиттер-буфер и метрики
+    // 4) Jitter buffer and live metrics
     JitterBuffer jbuf(static_cast<std::size_t>(bufcap), dropPolicy);
     std::atomic<bool> running{true};
     std::atomic<bool> paused{false};
     std::atomic<std::uint64_t> recvFrames{0}, usedFrames{0}, dropCount{0};
     std::atomic<std::uint64_t> recvBytes{0};
-    std::atomic<double> ewmaDtMs{0.0};
-    std::atomic<std::uint64_t> lastArriveNs{0};
+    std::atomic<double> ewmaDtMs{0.0};             // smoothed inter-arrival time (ms)
+    std::atomic<std::uint64_t> lastArriveNs{0};    // last arrival timepoint (ns)
 
-    // буфер последнего кадра для viewer
+    // last frame buffer for the viewer ("frame" mode)
     std::mutex last_mtx;
     std::vector<std::uint8_t> last_buf;
     std::uint32_t last_w=0, last_h=0;
@@ -180,11 +206,12 @@ int run_receive(int argc, char** argv) {
 
     const auto t0 = steady_clock::now();
 
-    // 5) запуск gRPC клиента: producer → jbuf
+    // 5) Start gRPC client: producer → push to jitter buffer
     semstitch::GrpcClient client(serverAddr, co);
     client.start([&](const semstitch::Frame& f) {
         if (f.width == 0 || f.height == 0) return; // heartbeat
 
+        // EWMA of inter-arrival time
         auto now = std::chrono::steady_clock::now();
         std::uint64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
         std::uint64_t prev_ns = lastArriveNs.exchange(now_ns);
@@ -196,6 +223,7 @@ int run_receive(int argc, char** argv) {
             else ewmaDtMs.store(alpha*dt + (1.0-alpha)*old);
         }
 
+        // Copy frame into RecvFrame
         RecvFrame rf;
         rf.width  = f.width;
         rf.height = f.height;
@@ -204,7 +232,8 @@ int run_receive(int argc, char** argv) {
         rf.t_arrive = now;
         rf.buf.assign(f.data.begin(), f.data.end());
 
-        {   // last-frame для viewer
+        // keep last frame for viewer
+        {
             std::lock_guard<std::mutex> lk(last_mtx);
             last_buf = rf.buf;
             last_w = rf.width; last_h = rf.height; last_fmt = rf.fmt;
@@ -216,7 +245,7 @@ int run_receive(int argc, char** argv) {
         jbuf.push(std::move(rf), dropCount);
     });
 
-    // 6) consumer-тред
+    // 6) Consumer thread: pop from jitter buffer and feed Stitcher
     std::thread consumer([&](){
         auto desiredQLen = [&](double avgDtMs)->std::size_t {
             if (avgDtMs <= 0.0) return 1;
@@ -244,6 +273,7 @@ int run_receive(int argc, char** argv) {
                 stitch.pushFrame(view);
                 ++usedFrames;
 
+                // pacing roughly to input rate if we know avg inter-arrival
                 if (avg > 0.0) {
                     auto nap = std::chrono::milliseconds( std::max(0, int(std::round(avg)) - 1) );
                     std::this_thread::sleep_for(nap);
@@ -252,7 +282,7 @@ int run_receive(int argc, char** argv) {
         }
     });
 
-    // 7) health-лог
+    // 7) Health log thread (periodic status)
     std::thread health([&](){
         using clk = std::chrono::steady_clock;
         auto t0h = clk::now();
@@ -290,7 +320,7 @@ int run_receive(int argc, char** argv) {
         }
     });
 
-    // 8) viewer (опционально)
+    // 8) Optional viewer window (mosaic/last frame) with hotkeys
     std::thread viewer;
     if (withView) {
         viewer = std::thread([&](){
@@ -329,6 +359,7 @@ int run_receive(int argc, char** argv) {
                                     cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255), 2, cv::LINE_AA);
                     }
                 } else {
+                    // Show the most recent single frame from the receiver
                     std::vector<std::uint8_t> buf;
                     std::uint32_t w=0,h=0;
                     {
@@ -344,6 +375,7 @@ int run_receive(int argc, char** argv) {
                     }
                 }
 
+                // Resize to fit the window and draw overlay
                 if (canvas.channels() == 1) {
                     cv::Mat shown;
                     double scale = 1.0;
@@ -358,6 +390,8 @@ int run_receive(int argc, char** argv) {
                     cv::imshow("SEM Viewer", displayize(canvas));
                 }
 
+                // Hotkeys: Q/ESC quit, S save, M toggle mosaic/frame,
+                // SPACE pause, +/- adjust latency target
                 int key = cv::waitKey(1);
                 if (key < 0) continue;
                 key = std::tolower(key);
@@ -380,6 +414,7 @@ int run_receive(int argc, char** argv) {
         });
     }
 
+    // Headless mode: stop on Enter
     if (!withView) {
         std::cout << "[receive] press Enter to stop.\n";
         std::cin.get();
@@ -392,7 +427,7 @@ int run_receive(int argc, char** argv) {
     running = false;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    // итоговое сохранение мозаики в outdir
+    // Final save of the mosaic into outdir
     save_mosaic_png(stitch.snapshot(), mosaic_path.string());
 
     // ---------- manifest JSON ----------
@@ -401,7 +436,7 @@ int run_receive(int argc, char** argv) {
         const double dur_s = std::max(1e-6, duration<double>(steady_clock::now() - t0).count());
         const double mbps   = (recvBytes.load() / dur_s) / (1024.0*1024.0);
 
-        // Артефакты
+        // Artifacts
         std::uintmax_t mosaic_sz = 0;
         std::string mosaic_crc;
         if (std::filesystem::exists(mosaic_path)) {

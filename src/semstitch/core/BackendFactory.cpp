@@ -5,6 +5,9 @@
 
 namespace semstitch {
 
+/* Backend factory.
+   - CPU   → returns a CpuBackend instance.
+   - CUDA/OpenCL → not implemented yet (throws). */
 std::unique_ptr<IBackend> makeBackend(BackendType type,
                                       std::size_t workerThreads /*=0*/)
 {

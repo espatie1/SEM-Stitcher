@@ -12,17 +12,17 @@ namespace semstitch {
 class GrpcClient {
 public:
     struct Options {
-        int   reconnectInitialMs = 300;   // начальный бэкофф при реконнекте
-        int   reconnectMaxMs     = 8000;  // верхняя граница бэкоффа
-        int   idleLogMs          = 2500;  // период heartbeat-лога в простое
-        bool  enableCompression  = false; // зарезервировано
-        bool  printHeartbeat     = true;
+        int   reconnectInitialMs = 300;   // initial reconnect backoff (ms)
+        int   reconnectMaxMs     = 8000;  // maximum reconnect backoff (ms)
+        int   idleLogMs          = 2500;  // heartbeat log period when idle (ms)
+        bool  enableCompression  = false; // reserved
+        bool  printHeartbeat     = true;  // print periodic heartbeat logs
     };
 
     using FrameHandler = std::function<void(const Frame&)>;
 
-    explicit GrpcClient(const std::string& serverAddr);     // конструктор по умолчанию
-    GrpcClient(const std::string& serverAddr, Options opt); // с заданными опциями
+    explicit GrpcClient(const std::string& serverAddr);     // constructor with default options
+    GrpcClient(const std::string& serverAddr, Options opt); // constructor with custom options
     ~GrpcClient();
 
     void start(FrameHandler cb);

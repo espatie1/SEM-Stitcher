@@ -17,6 +17,9 @@
 
 namespace semstitch {
 
+//------------------------------------------------------------------------------
+// Small helpers (time, CRC, enum mapping)
+//------------------------------------------------------------------------------
 namespace {
 static std::uint64_t to_ns(std::chrono::steady_clock::time_point tp) {
     using namespace std::chrono;
@@ -37,6 +40,12 @@ static PixelFmtPB to_pb(PixelFormat f) {
 }
 } // namespace
 
+//------------------------------------------------------------------------------
+// gRPC streaming server implementation
+//  - keeps a bounded queue of frames (backpressure by drop policy)
+//  - serves a bidi stream; we only write, but still drain inbound to be safe
+//  - sends heartbeats when there are no frames
+//------------------------------------------------------------------------------
 class GrpcServer::Impl : public SemStitch::Service {
 public:
     Impl(std::uint16_t port, Options opt)
@@ -49,6 +58,7 @@ public:
         server_ = b.BuildAndStart();
         std::cout << "[grpc-server] listening at " << addr_ << "\n";
 
+        // Simple monitor thread: prints queue size every second
         running_ = true;
         mon_ = std::thread([this]{
             using namespace std::chrono_literals;
@@ -70,11 +80,14 @@ public:
         if (mon_.joinable()) mon_.join();
     }
 
+    // Main streaming RPC. We continuously write FrameChunk messages.
+    // If no data is available, we write a heartbeat chunk (width=height=0).
     ::grpc::Status StreamFrames(::grpc::ServerContext* ctx,
                                 ::grpc::ServerReaderWriter<FrameChunk, FrameChunk>* stream) override
     {
         using namespace std::chrono;
 
+        // Drain inbound messages (if any) to avoid flow-control stalls
         std::atomic<bool> drain_running{true};
         std::thread drain([&]{
             FrameChunk dummy;
@@ -102,6 +115,7 @@ public:
             FrameChunk chunk;
 
             if (has_item) {
+                // Fill the chunk with frame data and metadata
                 chunk.set_width(item.w);
                 chunk.set_height(item.h);
                 chunk.set_format(to_pb(item.fmt));
@@ -113,6 +127,7 @@ public:
                     chunk.set_seq(seq);
                     chunk.set_crc32(crc32_bytes(item.data.data(), item.data.size()));
                 } else {
+                    // Empty data frame (should be rare)
                     chunk.clear_data();
                     chunk.set_seq(seq_.load(std::memory_order_relaxed));
                     chunk.set_crc32(0);
@@ -121,7 +136,7 @@ public:
                 if (!stream->Write(chunk)) break;
 
             } else {
-                // heartbeat
+                // Heartbeat: keep the stream alive during idle periods
                 chunk.set_width(0);
                 chunk.set_height(0);
                 chunk.set_format(PixelFmtPB::GRAY8);
@@ -139,6 +154,8 @@ public:
         return ::grpc::Status::OK;
     }
 
+    // Push a new frame into the bounded queue (thread-safe).
+    // If the queue is full, apply the selected drop policy.
     void push(const Frame& f) {
         QItem q;
         q.w     = f.width;

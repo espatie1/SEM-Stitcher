@@ -25,7 +25,6 @@ ViewportScannerSource::ViewportScannerSource(const Options& opt)
 }
 
 void ViewportScannerSource::ensureMasterReady() {
-    // 1) Если указан путь к файлу — пробуем загрузить
     if (!opt_.masterPath.empty()) {
         cv::Mat m = cv::imread(opt_.masterPath, cv::IMREAD_GRAYSCALE);
         if (m.empty()) {
@@ -37,16 +36,13 @@ void ViewportScannerSource::ensureMasterReady() {
         master_ = m;
         return;
     }
-
-    // 2) Иначе — синтетический паттерн
     master_ = makePattern(opt_.masterW, opt_.masterH, opt_.pattern);
 }
 
 cv::Mat ViewportScannerSource::makePattern(int w, int h, const std::string& pat) {
     cv::Mat base(h, w, CV_8UC1);
-    // Мягкая «SEM-подложка»
-    cv::randn(base, 128, 12);                      // гаусс-шум
-    cv::GaussianBlur(base, base, {0,0}, 1.5);      // лёгкий блюр
+    cv::randn(base, 128, 12);                      // base noise texture
+    cv::GaussianBlur(base, base, {0,0}, 1.5);      // smooth a little
 
     auto draw_grid = [&](int step, int thickness, int val){
         for (int y = 0; y < h; y += step) cv::line(base, {0,y}, {w-1,y}, cv::Scalar(val), thickness, cv::LINE_AA);
@@ -86,13 +82,13 @@ cv::Mat ViewportScannerSource::makePattern(int w, int h, const std::string& pat)
         draw_checker();
         draw_rings();
     } else if (pat == "noise") {
-        // оставим только подложку
+        // keep noise-only background
     } else { // "grid" (default)
         draw_grid(128, 1, 180);
         draw_text("SEM");
     }
 
-    // лёгкая нормализация
+    // light normalization
     double mn, mx; cv::minMaxLoc(base, &mn, &mx);
     if (mx > mn) {
         base.convertTo(base, CV_8U, 255.0/(mx-mn), -mn*255.0/(mx-mn));
@@ -103,7 +99,7 @@ cv::Mat ViewportScannerSource::makePattern(int w, int h, const std::string& pat)
 std::optional<Frame> ViewportScannerSource::next() {
     if (master_.empty()) return std::nullopt;
 
-    // Параметры сетки и перекрытия
+    // Grid and overlap parameters
     const int W = master_.cols, H = master_.rows;
     const int tw = opt_.tileW, th = opt_.tileH;
     const double stepX = tw * (1.0 - opt_.overlap);
@@ -116,34 +112,34 @@ std::optional<Frame> ViewportScannerSource::next() {
     int k = curIdx_ % total;
     int gy = k / tilesX;
     int gx = k % tilesX;
-    // «змейка»
+    // snake order
     if (gy & 1) gx = (tilesX - 1) - gx;
 
-    // Базовая позиция
+    // base position
     double x0 = gx * stepX;
     double y0 = gy * stepY;
 
-    // Дрейф по времени
+    // time-based drift
     using clk = std::chrono::steady_clock;
     double tsec = std::chrono::duration<double>(clk::now() - t0_).count();
     x0 += opt_.driftX * tsec;
     y0 += opt_.driftY * tsec;
 
-    // Джиттер
+    // jitter
     x0 += opt_.jitterSigma * gauss_(rng_);
     y0 += opt_.jitterSigma * gauss_(rng_);
 
-    // Ограничим ROI
+    // clamp ROI to image bounds
     int x = std::max(0, std::min((int)std::lround(x0), W - tw));
     int y = std::max(0, std::min((int)std::lround(y0), H - th));
 
     cv::Rect roi{x, y, tw, th};
     cv::Mat patch = master_(roi).clone();
 
-    // Фликер (медленное изменение яркости)
+    // flicker (slow brightness change)
     double flick = 1.0 + opt_.flickerAmp * std::sin(2.0 * kPI * 0.35 * tsec);
     if (std::abs(flick - 1.0) > 1e-3) {
-        cv::Mat tmp; patch.convertTo(tmp, CV_16S); // чтобы не клипать раньше времени
+        cv::Mat tmp; patch.convertTo(tmp, CV_16S); // avoid early clipping
         for (int i = 0; i < tmp.rows; ++i) {
             short* p = tmp.ptr<short>(i);
             for (int j = 0; j < tmp.cols; ++j) {
@@ -154,10 +150,10 @@ std::optional<Frame> ViewportScannerSource::next() {
         tmp.convertTo(patch, CV_8U);
     }
 
-    // Подготовим буфер возврата
+    // prepare output buffer
     scratch_.assign(patch.data, patch.data + (patch.rows * patch.cols));
 
-    // Следующая плитка
+    // advance to next tile
     ++curIdx_;
     if (curIdx_ >= total) curIdx_ = 0;
 
